@@ -1,0 +1,21 @@
+# Official open source NGINX image. The "-otel" variant ships the OTel
+# dynamic module (ngx_otel_module.so) preinstalled, so no separate module
+# image or multi-stage copy is needed; nginx.conf still needs its own
+# load_module directive to actually load it.
+FROM nginx:1.31.2-alpine-otel
+
+RUN apk add --no-cache openssl
+
+# Generate self-signed cert at build time
+RUN mkdir -p /etc/nginx/ssl && \
+    openssl req -x509 -newkey ec \
+      -pkeyopt ec_paramgen_curve:P-256 \
+      -keyout /etc/nginx/ssl/server.key \
+      -out /etc/nginx/ssl/server.crt \
+      -days 3650 \
+      -nodes \
+      -subj "/CN=nginx"
+
+COPY nginx.conf /etc/nginx/nginx.conf
+
+ENTRYPOINT ["/usr/sbin/nginx", "-g", "daemon off;"]

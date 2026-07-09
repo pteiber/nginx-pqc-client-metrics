@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+# No scrape_configs: this Prometheus only exists to receive Tempo's
+# metrics-generator remote_write (service-graph and span-metrics data),
+# not to scrape anything itself. Requires --web.enable-remote-write-receiver
+# on the Prometheus command line, since remote-write ingestion is opt-in.
+scrape_configs: []

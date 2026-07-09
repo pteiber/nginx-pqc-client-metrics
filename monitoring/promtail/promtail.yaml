@@ -1,0 +1,87 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Reads systemd-journald directly rather than podman's Docker-API-compatible
+  # socket. docker_sd_configs (auto-discovery via the socket) was the original
+  # design, but SELinux-enforcing podman machine VMs (macOS default) deny a
+  # confined container's connect() to a host socket by policy; a separate
+  # check from file permissions, and not something to work around by loosening
+  # container confinement. Journal reads are a standard bind-mounted file read,
+  # which doesn't hit that same policy class. podman's default log driver here
+  # is journald (confirmed via `podman inspect --format '{{.HostConfig.LogConfig.Type}}'`),
+  # and conmon tags every container's journal entries with CONTAINER_NAME /
+  # CONTAINER_ID_FULL / SYSLOG_IDENTIFIER fields (confirmed via `journalctl -o json`).
+  - job_name: pqc-demo-containers
+    journal:
+      path: /var/log/journal
+      max_age: 12h
+      labels:
+        job: pqc-demo-containers
+    relabel_configs:
+      # No docker labels to gate on via journal fields (unlike
+      # __meta_docker_container_label_* under docker_sd_configs), so the
+      # collect-or-not decision becomes a static allowlist of this project's
+      # container names instead of a dynamic opt-in label. Deliberately
+      # excludes promtail/loki/tempo/grafana's own journal noise.
+      - source_labels: ['__journal_container_name']
+        action: keep
+        regex: 'nginx|go-dual-share|curl-pq|curl-classic|openssl-35-dual|openssl-classic-only|hrr-trigger|legacy-tls12'
+      - source_labels: ['__journal_container_name']
+        target_label: container
+      # No real "namespace" concept in compose, so hardcode it: every
+      # existing {namespace="pqc-demo"} LogQL query (carried over from the
+      # k8s dashboard, unmodified) keeps working unchanged.
+      - target_label: namespace
+        replacement: pqc-demo
+
+    pipeline_stages:
+      # Parse JSON log lines emitted by all clients and NGINX
+      - match:
+          selector: '{namespace="pqc-demo"}'
+          stages:
+            - json:
+                expressions:
+                  client: client
+                  ts: ts
+                  curve: curve
+                  hrr: hrr
+                  latency_ms: latency_ms
+                  error: error
+                  # NGINX access log fields
+                  ssl_protocol: ssl_protocol
+                  ssl_cipher: ssl_cipher
+                  ssl_curve: ssl_curve
+                  request_time: request_time
+                  status: status
+            # Grafana/Loki's automatic detected_level heuristic naively
+            # substring-matches "error" anywhere in the raw log line, so a
+            # perfectly healthy client line like {"error":null} was showing
+            # an ERROR badge (matching the JSON *key*, not its value), and
+            # NGINX access log lines with no such substring showed "unknown".
+            # Compute a real level explicitly from parsed field values and
+            # promote it to a `level` stream label below: Loki uses an
+            # existing `level` label directly instead of guessing from text.
+            # Two cases share this pipeline: NGINX access log lines (only
+            # these have `status`) are leveled off their HTTP status code;
+            # client lines (only these have `error`, when non-null) are
+            # leveled off whether they self-reported a real error. `hrr` is
+            # deliberately not treated as an error condition -- it's
+            # expected, demonstrated behavior for the hrr-trigger client.
+            - template:
+                source: level
+                template: '{{ if .status }}{{ if lt .status "400" }}info{{ else if lt .status "500" }}warn{{ else }}error{{ end }}{{ else if .error }}error{{ else }}info{{ end }}'
+            - labels:
+                client:
+                curve:
+                hrr:
+                ssl_curve:
+                ssl_protocol:
+                level:

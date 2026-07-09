@@ -1,0 +1,216 @@
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: nginx
+    ports:
+      - "${HOST_HTTPS_PORT:-8443}:443"
+    expose:
+      - "8080"
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - tempo
+
+  go-dual-share:
+    build:
+      context: clients/go-dual-share
+      dockerfile: Dockerfile
+    container_name: go-dual-share
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  curl-pq:
+    image: openquantumsafe/curl:latest
+    container_name: curl-pq
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/curl-pq/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  curl-classic:
+    image: openquantumsafe/curl:latest
+    container_name: curl-classic
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/curl-classic/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  openssl-35-dual:
+    image: openquantumsafe/oqs-ossl3:latest
+    container_name: openssl-35-dual
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/openssl-35-dual/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  openssl-classic-only:
+    image: openquantumsafe/oqs-ossl3:latest
+    container_name: openssl-classic-only
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/openssl-classic-only/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  hrr-trigger:
+    image: openquantumsafe/oqs-ossl3:latest
+    container_name: hrr-trigger
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/hrr-trigger/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  legacy-tls12:
+    image: curlimages/curl:latest
+    container_name: legacy-tls12
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint.sh"]
+    environment:
+      SERVER_HOST: nginx
+      MIN_INTERVAL_SECONDS: "5"
+      MAX_INTERVAL_SECONDS: "15"
+    volumes:
+      - ./clients/legacy-tls12/entrypoint.sh:/entrypoint.sh:ro
+    labels:
+      - "pqc.collect=true"
+    depends_on:
+      - nginx
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    container_name: promtail
+    command: ["-config.file=/etc/promtail/promtail.yaml"]
+    # Reads systemd-journald directly instead of podman's socket (see
+    # monitoring/promtail/promtail.yaml for why: SELinux-enforcing podman
+    # machine VMs deny a confined container's connect() to a host socket by
+    # policy, a check that's separate from file permissions). Running as
+    # root here is standard for a log shipper reading a root:systemd-journal
+    # owned directory, a much narrower privilege than disabling SELinux
+    # confinement would have been.
+    user: root
+    volumes:
+      - ./monitoring/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      # :z relabels the mount with a shared SELinux context; required on
+      # SELinux-enforcing podman machine VMs, otherwise even root inside the
+      # container gets "permission denied" opening the journal directory
+      # (verified). This is the standard, well-supported bind-mount-relabel
+      # case, unlike the podman-socket approach this replaced, where the
+      # denial was on the socket connectto permission class specifically and
+      # :z alone wasn't sufficient.
+      - /var/log/journal:/var/log/journal:ro,z
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./monitoring/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  tempo:
+    image: grafana/tempo:2.7.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./monitoring/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    depends_on:
+      - prometheus
+
+  # Receives Tempo's metrics-generator remote_write (service-graph and
+  # span-metrics data derived from traces). Not scraping anything itself,
+  # see monitoring/prometheus/prometheus.yml and monitoring/tempo/tempo.yaml
+  # for why this exists: without it, Tempo's querier fails trace-view
+  # TraceQL metrics queries with "empty ring" (no metrics-generator
+  # registered), since the generator needs somewhere to write to.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # Demo convenience, not a hardened default: anonymous admin access,
+      # fine for a local-only compose stack, not for anything exposed.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
+volumes:
+  promtail-positions:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
