@@ -68,6 +68,14 @@ func main() {
 		DisableKeepAlives: true,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // demo: self-signed cert
+			// Persist TLS 1.3 session tickets across connections so every
+			// handshake after the first resumes (PSK) instead of repeating the
+			// full, expensive PQC key exchange. The cache is process-wide and
+			// outlives individual connections, so it works even though
+			// DisableKeepAlives forces a fresh TCP connection per request:
+			// Go reads the post-handshake NewSessionTicket during the normal
+			// response I/O and stores it here for the next attempt.
+			ClientSessionCache: tls.NewLRUClientSessionCache(32),
 		},
 	}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}

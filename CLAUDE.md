@@ -38,10 +38,14 @@ everything else untouched.
 ## Architecture
 
 1. `nginx.conf` is the single source of truth for the server: TLS group preference
-   (`ssl_conf_command Groups "X25519MLKEM768:X25519:P-256"`), the JSON `log_format`, and
-   `otel_span_attr` directives that copy TLS variables onto trace spans. Built into the image
-   by `Dockerfile.nginx` (official `nginx:1.31.2-alpine-otel`; no NGINX Plus license needed,
-   though the same config also works unmodified against NGINX Plus).
+   (`ssl_conf_command Groups "X25519MLKEM768:X25519:P-256"`), TLS 1.3 session resumption
+   (`ssl_session_cache` / `ssl_session_tickets` / `ssl_session_timeout`), the JSON `log_format`,
+   and `otel_span_attr` directives that copy TLS variables onto trace spans. Built into the
+   image by `Dockerfile.nginx` (official `nginx:1.31.2-alpine-otel`; no NGINX Plus license
+   needed, though the same config also works unmodified against NGINX Plus). `Dockerfile.nginx`
+   also generates a shared `ssl_session_ticket_key` (`openssl rand 80`) at build time: under
+   `worker_processes auto` each worker otherwise invents its own ticket key at startup, so
+   cross-worker resumption silently degrades to full handshakes without one shared key.
 
 2. Seven client containers (`clients/*/`) each hit `GET /handshake-info` in a loop with a
    random 5-15s delay, each configured with different TLS groups to negotiate a different
@@ -56,6 +60,15 @@ everything else untouched.
    first (`x=$(printf ...)`): command substitution strips the trailing newline that
    terminates the HTTP headers and silently breaks the request (this caused real 400s/408s
    in this repo's history).
+
+   Two clients deliberately reuse TLS sessions so the resumption dashboard has real data:
+   `go-dual-share` sets a Go `ClientSessionCache`, and `openssl-35-dual` persists its session
+   with `s_client -sess_out` / `-sess_in` to a fixed `/tmp/*.sess` file across loop iterations
+   (a fixed path, not a per-iteration `mktemp`, so the session survives). The TLS 1.3 ticket
+   arrives after the handshake, so the client must read the full response before closing or
+   `-sess_out` writes an empty file and reuse never happens. The other clients always
+   full-handshake for contrast; curl is not converted because it caches sessions only within a
+   single process and each iteration is a fresh `curl`.
 
 3. The observability stack is fully self-contained in `compose.yaml`. Promtail reads
    container logs from the **systemd journal directly** (`/var/log/journal`, bind-mounted
@@ -80,7 +93,11 @@ everything else untouched.
 5. All 7 clients and nginx write structured JSON logs. Promtail's `pipeline_stages`
    (`monitoring/promtail/promtail.yaml`) compute a `level` label explicitly rather than
    relying on Loki's `detected_level` heuristic, which false-positives on the JSON key
-   `"error"` even when its value is `null`.
+   `"error"` even when its value is `null`. Promtail only promotes a subset of fields to
+   stream labels; dashboard panels read the rest (e.g. `remote_addr`, `tls_session_reused`,
+   `nginx_server`) at query time with `| json`, so adding a field to the NGINX `log_format`
+   needs no Promtail change. The raw `$ssl_session_reused` `r`/`.` value is mapped to
+   `Full`/`None` (degree of resumption) in the dashboard via `label_format`, not in NGINX.
 
 ## Conventions
 

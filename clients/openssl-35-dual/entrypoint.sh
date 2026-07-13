@@ -3,6 +3,33 @@ HOST="${SERVER_HOST:-nginx}"
 MIN_INTERVAL="${MIN_INTERVAL_SECONDS:-5}"
 MAX_INTERVAL="${MAX_INTERVAL_SECONDS:-15}"
 USER_AGENT="openssl-35-dual"
+
+# Fixed path (not a per-iteration mktemp) so the captured TLS session persists
+# across loop iterations. -sess_in replays it as a PSK so nginx reports the
+# connection as reused: resuming a hybrid-PQC handshake avoids exactly the
+# expensive full key exchange this demo is about. The file lives in the
+# container's writable /tmp and resets on restart (first request after a
+# restart is then a full handshake, which is expected).
+SESS_FILE=/tmp/openssl-35-dual.sess
+
+# Capture a fresh session ticket on a SEPARATE, untimed connection.
+#
+# The TLS 1.3 NewSessionTicket is a post-handshake message: the server sends it
+# shortly after the handshake completes, so s_client has to stay on the
+# connection to receive it before -sess_out can write it. The trailing "sleep"
+# holds s_client's stdin open long enough for the ticket to arrive (without it,
+# stdin hits EOF the instant the request is sent, s_client closes, and -sess_out
+# writes nothing, so reuse silently never happens). That wait is why capture is
+# kept OUT of the timed request below: folding it in would add ~1s to every
+# latency_ms sample and make resumption look slower than a full handshake, the
+# opposite of the truth. As always in this repo, printf is piped straight into
+# s_client; never capture it in a variable ($(...) strips the trailing CRLF
+# that terminates the HTTP headers).
+capture_session() {
+  { printf 'GET /handshake-info HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nConnection: close\r\n\r\n' "$HOST" "$USER_AGENT"; sleep 1; } \
+    | openssl s_client -connect "${HOST}:443" -groups "X25519MLKEM768:X25519" -tls1_3 -sess_out "$SESS_FILE" >/dev/null 2>&1 || true
+}
+
 while true; do
   TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   # BusyBox date has no sub-second precision (%N is not expanded);
@@ -21,14 +48,37 @@ while true; do
   # line that terminates the HTTP headers (command substitution
   # drops trailing newlines), leaving nginx waiting on an incomplete
   # request; piping printf's output directly avoids that.
+  #
+  # Resume from a previously captured ticket when one exists (-sess_in). No
+  # -sess_out here: refreshing the ticket needs the connection held open (see
+  # capture_session), which would pollute the latency measurement. A single
+  # ticket resumes many times, and the recapture-on-miss below refreshes it
+  # when it eventually expires. First iteration has no file, so it is a genuine
+  # full handshake with an honest latency sample.
+  if [ -f "$SESS_FILE" ]; then
+    SESS_ARGS="-sess_in $SESS_FILE"
+  else
+    SESS_ARGS=""
+  fi
+
   OUTPUT=$(printf 'GET /handshake-info HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nConnection: close\r\n\r\n' "$HOST" "$USER_AGENT" | openssl s_client \
     -connect "${HOST}:443" \
     -groups "X25519MLKEM768:X25519" \
     -tls1_3 \
+    $SESS_ARGS \
     -msg 2>&1 || true)
 
   END=$(awk '{print $1}' /proc/uptime)
   LATENCY=$(awk -v s="$START" -v e="$END" 'BEGIN{printf "%.0f", (e-s)*1000}')
+
+  # Refresh the ticket for the next iteration whenever this handshake was not
+  # reused: either the first run (no file yet) or a ticket that expired and
+  # made the server fall back to a full handshake. s_client prints "Reused,"
+  # on a resumed session and "New," on a full one. Capture is untimed so it
+  # never affects the latency logged above.
+  if ! echo "$OUTPUT" | grep -q "Reused, TLSv1.3"; then
+    capture_session
+  fi
 
   # Hybrid/PQC groups print "Negotiated TLS1.3 group: <name>";
   # classical ECDHE groups instead print "Peer Temp Key: <name>, N bits".

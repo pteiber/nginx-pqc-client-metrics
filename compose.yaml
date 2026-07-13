@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile.nginx
     container_name: nginx
+    # Stable, readable $hostname so the "by NGINX server" breakdown reads
+    # "nginx" instead of the random container ID podman uses by default.
+    hostname: nginx
     ports:
       - "${HOST_HTTPS_PORT:-8443}:443"
     expose:

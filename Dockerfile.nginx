@@ -16,6 +16,12 @@ RUN mkdir -p /etc/nginx/ssl && \
       -nodes \
       -subj "/CN=nginx"
 
+# Shared TLS session-ticket key so every worker (worker_processes auto) can
+# decrypt tickets any other worker issued; without a fixed key each worker
+# generates its own at startup and cross-worker resumption silently fails.
+# 80 bytes is the AES-256-CBC + HMAC-SHA-256 ticket key size nginx expects.
+RUN openssl rand 80 > /etc/nginx/ssl/ticket.key
+
 COPY nginx.conf /etc/nginx/nginx.conf
 
 ENTRYPOINT ["/usr/sbin/nginx", "-g", "daemon off;"]

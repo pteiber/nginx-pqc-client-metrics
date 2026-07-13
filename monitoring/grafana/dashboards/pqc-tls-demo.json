@@ -105,7 +105,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 0
       },
@@ -174,8 +174,8 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 6,
         "y": 0
       },
       "id": 11,
@@ -385,8 +385,8 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 0
       },
       "id": 5,
@@ -583,7 +583,7 @@
         "h": 16,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 29
       },
       "id": 8,
       "options": {
@@ -610,6 +610,479 @@
       ],
       "title": "Recent Log Lines (pqc-demo)",
       "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "description": "Percentage of completed TLS handshakes (NGINX access log, container=\"nginx\") that resumed an existing session via a TLS 1.3 ticket/PSK ($ssl_session_reused = \"r\") rather than performing a full handshake, per $__interval step. Higher means less repeated PQC key exchange.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 12,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.4.3",
+      "targets": [
+        {
+          "direction": "backward",
+          "editorMode": "code",
+          "expr": "100 * sum(count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused = \"r\" [$__interval])) / sum(count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused != \"\" [$__interval]))",
+          "legendFormat": "Reuse %",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          }
+        }
+      ],
+      "title": "TLS Session Reuse %",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "description": "TLS session resumption (reused vs full handshake) broken down by the NGINX instance that served the request ($hostname). Sourced from the NGINX access log, scoped via container=\"nginx\". A single-instance demo shows one row; the breakdown generalizes to multiple NGINX servers.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Connections"
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resumption"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Resumption"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "Full": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "None": {
+                        "color": "blue",
+                        "index": 1
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 19
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Connections"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.3",
+      "targets": [
+        {
+          "direction": "backward",
+          "editorMode": "code",
+          "expr": "sum by (nginx_server, resumption) (count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused != \"\" | label_format resumption=`{{ if eq .tls_session_reused \"r\" }}Full{{ else }}None{{ end }}` [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          }
+        }
+      ],
+      "title": "TLS Session Reuse by NGINX Server",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "nginx_server": 0,
+              "resumption": 1,
+              "Value #A": 2
+            },
+            "renameByName": {
+              "Value #A": "Connections",
+              "nginx_server": "NGINX Server",
+              "resumption": "Resumption"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "description": "TLS session resumption (reused vs full handshake) broken down by client IP ($remote_addr) from the NGINX access log. go-dual-share and openssl-35-dual reuse sessions; curl-pq, curl-classic, openssl-classic-only, and hrr-trigger always full-handshake for contrast.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Connections"
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resumption"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Resumption"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "Full": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "None": {
+                        "color": "blue",
+                        "index": 1
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 8,
+        "y": 19
+      },
+      "id": 14,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Connections"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.3",
+      "targets": [
+        {
+          "direction": "backward",
+          "editorMode": "code",
+          "expr": "sum by (remote_addr, resumption) (count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused != \"\" | label_format resumption=`{{ if eq .tls_session_reused \"r\" }}Full{{ else }}None{{ end }}` [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          }
+        }
+      ],
+      "title": "TLS Session Reuse by Client IP",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "remote_addr": 0,
+              "resumption": 1,
+              "Value #A": 2
+            },
+            "renameByName": {
+              "Value #A": "Connections",
+              "remote_addr": "Remote Address",
+              "resumption": "Resumption"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "description": "Percentage of each client IP's TLS connections that resumed a session (reused / total), from the NGINX access log (container=\"nginx\"). Clients that never resume show 0; the adjacent \"by Client IP\" counts table gives the sample size behind each percentage.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Reuse %"
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 19
+      },
+      "id": 15,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Reuse %"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.3",
+      "targets": [
+        {
+          "direction": "backward",
+          "editorMode": "code",
+          "expr": "100 * (sum by (remote_addr) (count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused = \"r\" [$__range])) or sum by (remote_addr) (count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused != \"\" [$__range])) * 0) / sum by (remote_addr) (count_over_time({namespace=\"pqc-demo\", container=\"nginx\"} | json | tls_session_reused != \"\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          }
+        }
+      ],
+      "title": "TLS Session Reuse % by Client IP",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "remote_addr": 0,
+              "Value #A": 1
+            },
+            "renameByName": {
+              "remote_addr": "Remote Address",
+              "Value #A": "Reuse %"
+            }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "preload": false,
@@ -646,6 +1119,6 @@
   "timezone": "browser",
   "title": "NGINX PQC Client Coverage",
   "uid": "pqc-tls-demo",
-  "version": 22,
+  "version": 27,
   "weekStart": ""
 }
